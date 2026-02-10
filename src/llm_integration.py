@@ -17,6 +17,8 @@ load_dotenv()
 
 # Configure LiteLLM to be resilient to unsupported parameters
 litellm.drop_params = True
+# Disable background callbacks to prevent 'Task was destroyed but it is pending' errors
+litellm.avoid_async_callbacks = True
 
 # Streamlit Cloud Secret Integration
 try:

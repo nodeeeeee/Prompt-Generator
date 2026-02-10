@@ -38,13 +38,30 @@ def run_async(coro):
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             
-            # Add a global task timeout of 600s to prevent orphan threads
-            task = loop.create_task(coro)
-            res = loop.run_until_complete(asyncio.wait_for(task, timeout=600.0))
-            result.append(res)
-            
-            # Clean up the loop
-            loop.close()
+            try:
+                # Add a global task timeout of 600s to prevent orphan threads
+                task = loop.create_task(coro)
+                res = loop.run_until_complete(asyncio.wait_for(task, timeout=600.0))
+                result.append(res)
+            finally:
+                # --- ROBUST CLEANUP ---
+                # 1. Gather all pending tasks (including those started by libraries like litellm)
+                pending = asyncio.all_tasks(loop)
+                if pending:
+                    # 2. Cancel them gracefully
+                    for p_task in pending:
+                        p_task.cancel()
+                    
+                    # 3. Allow tasks to finish cancellation (with a small timeout)
+                    loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                
+                # 4. Shutdown async generators (common in LLM streams)
+                loop.run_until_complete(loop.shutdown_asyncgens())
+                
+                # 5. Finally close the loop
+                loop.close()
+                asyncio.set_event_loop(None)
+                
         except asyncio.TimeoutError:
             exception.append(TimeoutError("The operation took too long and was terminated."))
         except Exception as e:
