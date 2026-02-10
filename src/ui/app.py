@@ -1,6 +1,9 @@
 import streamlit as st
 import os
 import sys
+import json
+import asyncio
+import threading
 
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
@@ -17,8 +20,6 @@ from src.features.academic_exporter import AcademicExporter
 from src.features.prompt_refiner import PromptRefiner
 from src.security_engine import SecurityEngine, SecurityState
 from src.features.pdf_parser import extract_text_from_pdf
-import asyncio
-import threading
 
 # Initialize Journal
 journal = ResearchJournal()
@@ -35,7 +36,6 @@ def run_async(coro):
         try:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            # Add a global task timeout of 180s to prevent orphan threads
             task = loop.create_task(coro)
             result.append(loop.run_until_complete(asyncio.wait_for(task, timeout=180.0)))
             loop.close()
@@ -72,9 +72,10 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# State Initialization
+# State Initialization (Fixed & Unified)
 if "intention" not in st.session_state: st.session_state.intention = ""
 if "generated_prompt" not in st.session_state: st.session_state.generated_prompt = ""
+if "second_prompt" not in st.session_state: st.session_state.second_prompt = ""
 if "current_questions" not in st.session_state: st.session_state.current_questions = []
 if "qa_history" not in st.session_state: st.session_state.qa_history = []
 if "clarification_status" not in st.session_state: st.session_state.clarification_status = "IDLE"
@@ -86,14 +87,17 @@ if "idea_questions" not in st.session_state: st.session_state.idea_questions = [
 if "idea_clarification_status" not in st.session_state: st.session_state.idea_clarification_status = "IDLE"
 if "selected_files" not in st.session_state: st.session_state.selected_files = {}
 if "discovered_files" not in st.session_state: st.session_state.discovered_files = []
-if "prompt_refinement" not in st.session_state: st.session_state.prompt_refinement = ""
+if "paper_text" not in st.session_state: st.session_state.paper_text = ""
 
 def reset_state():
     st.session_state.generated_prompt = ""
+    st.session_state.second_prompt = ""
     st.session_state.current_questions = []
     st.session_state.qa_history = []
     st.session_state.clarification_status = "IDLE"
+    st.session_state.idea_clarification_status = "IDLE"
     st.session_state.estimated_turns = 0
+    st.session_state.discovered_files = []
 
 # Sidebar logic
 try:
@@ -116,9 +120,13 @@ with st.sidebar:
         os.environ["OPENAI_API_KEY"] = api_key
     
     st.divider()
-    creativity_mode = st.toggle("🧠 Creativity Mode", help="Skip questions and use agent creativity.")
+    creativity_mode = st.toggle("🧠 Creativity Mode", help="Self-answer architectural questions.")
     
     st.divider()
+    if st.button("🧹 Clear All States"):
+        st.session_state.clear()
+        st.rerun()
+    
     st.info("Target: CS Researchers\nHigh-quality, context-aware prompt generation.")
 
 # Initialize Core Services
@@ -141,21 +149,20 @@ def skip_question_callback(key):
 # --- Tab 1: New Project ---
 with tab1:
     st.header("Start a New Project")
-    user_intention = st.text_area("What do you want to build?", height=100, placeholder="e.g., A distributed key-value store in Go...")
+    user_intention = st.text_area("What do you want to build?", height=100, placeholder="e.g., A distributed key-value store in Go...", key="new_project_intent")
     
     if st.button("Analyze & Start", key="btn_new"):
         reset_state()
         if user_intention:
             st.session_state.intention = user_intention
-            
             with st.status("🧠 Agent is architecting your project...", expanded=True) as status:
                 st.write("Analyzing requirements...")
                 result = run_async(clarifier.analyze_status(user_intention))
                 
                 if creativity_mode and result["status"] == "REFINING":
-                    st.write("Creativity Mode active: Self-answering architectural questions...")
+                    st.write("Creativity Mode: Self-answering architectural questions...")
                     self_qa = run_async(clarifier.self_answer_questions(user_intention, result["questions"]))
-                    st.session_state.qa_history.extend(self_qa)
+                    st.session_state.qa_history = self_qa
                     st.session_state.clarification_status = "READY"
                     status.update(label="✅ Project Architecture Scoped!", state="complete", expanded=False)
                 else:
@@ -175,11 +182,8 @@ with tab1:
         
         for i, q in enumerate(st.session_state.current_questions):
             q_key = f"q_input_{i}_{len(st.session_state.qa_history)}"
-            
             col1, col2 = st.columns([5, 1])
             with col1:
-                if q_key not in st.session_state:
-                    st.session_state[q_key] = ""
                 st.text_input(f"Q{i+1}: {q}", key=q_key)
             with col2:
                 st.write(" ") # Padding
@@ -187,13 +191,12 @@ with tab1:
                 st.button("Skip", key=f"skip_{q_key}", on_click=skip_question_callback, args=(q_key,))
         
         if st.button("Evaluate All & Proceed", type="primary"):
-            # Commit current answers to history
             for i, q in enumerate(st.session_state.current_questions):
                 q_key = f"q_input_{i}_{len(st.session_state.qa_history)}"
                 ans = st.session_state.get(q_key, "")
                 st.session_state.qa_history.append({"q": q, "a": ans})
             
-            with st.spinner("Re-evaluating technical clarity..."):
+            with st.status("Re-evaluating technical clarity...", expanded=True):
                 result = run_async(clarifier.analyze_status(st.session_state.intention, st.session_state.qa_history))
                 st.session_state.clarification_status = result["status"]
                 st.session_state.current_questions = result["questions"]
@@ -216,28 +219,31 @@ with tab1:
         mode_label = st.radio("Development Strategy", list(mode_mapping.keys()), index=1, horizontal=True)
         
         if st.button("Build Final Prompt"):
-            with st.spinner("🧠 AI is architecting your prompt..."):
+            with st.status("🧠 AI is architecting your prompt...", expanded=True) as status:
                 questions = [item['q'] for item in st.session_state.qa_history]
                 answers = [item['a'] for item in st.session_state.qa_history]
                 
-                # Fetch insights separately for the journal
+                # Fetch insights for the journal
                 tree = scan_directory(os.getcwd())
+                st.write("Investigating context...")
                 insights = run_async(builder.discovery_agent.investigate_and_analyze(os.getcwd(), st.session_state.intention, tree))
                 
+                st.write("Generating primary prompt...")
                 final_prompt, disc_paths = run_async(builder.build_prompt(
                     st.session_state.intention, answers, questions, mode=mode_mapping[mode_label]
                 ))
                 
-                second_prompt = None
+                second_p = ""
                 if consensus_mode and second_model:
+                    st.write(f"Generating consensus with {second_model}...")
                     second_client = LLMClient(default_model=second_model)
                     second_builder = PromptBuilder(second_client)
-                    second_prompt, _ = run_async(second_builder.build_prompt(
+                    second_p, _ = run_async(second_builder.build_prompt(
                         st.session_state.intention, answers, questions, mode=mode_mapping[mode_label]
                     ))
 
                 st.session_state.generated_prompt = final_prompt
-                st.session_state.second_prompt = second_prompt
+                st.session_state.second_prompt = second_p
                 st.session_state.discovered_files = disc_paths
                 
                 # Save to Journal
@@ -248,14 +254,14 @@ with tab1:
                     final_prompt=final_prompt,
                     tags=["new-project", f"model:{selected_model}"]
                 )
-                if second_prompt:
+                if second_p:
                     entry.tags.append(f"consensus:{second_model}")
-                    entry.metrics["second_prompt"] = second_prompt
-                
+                    entry.metrics["second_prompt"] = second_p
                 journal.add_entry(entry)
+                status.update(label="✨ Prompt Built!", state="complete")
 
         if st.session_state.generated_prompt:
-            if st.session_state.get("second_prompt"):
+            if st.session_state.second_prompt:
                 col_p1, col_p2 = st.columns(2)
                 with col_p1:
                     st.subheader(f"Model: {selected_model}")
@@ -264,27 +270,22 @@ with tab1:
                     st.subheader(f"Model: {second_model}")
                     st.code(st.session_state.second_prompt, language="markdown")
             else:
-                if st.session_state.discovered_files:
-                    with st.expander("👀 View Autonomously Read Files"):
-                        for f in st.session_state.discovered_files:
-                            st.text(f"• {f}")
                 st.code(st.session_state.generated_prompt, language="markdown")
             
             # Interactive Refinement
             st.divider()
             st.subheader("💬 Interactive Refinement")
-            refine_input = st.chat_input("Suggest a change (e.g., 'Make it more modular')")
+            refine_input = st.chat_input("Suggest a change (e.g., 'Make it more modular')", key="chat_tab1")
             if refine_input:
-                with st.spinner("Refining..."):
-                    new_prompt = run_async(refiner.refine_prompt(st.session_state.generated_prompt, refine_input))
-                    st.session_state.generated_prompt = new_prompt
-                    st.rerun()
+                with st.status("Refining prompt...", expanded=True):
+                    new_p = run_async(refiner.refine_prompt(st.session_state.generated_prompt, refine_input))
+                    st.session_state.generated_prompt = new_p
+                st.rerun()
 
 # --- Tab 2: Evolve Project ---
 with tab2:
     st.header("Project Evolution")
     
-    # Context Scanning (Global for both modes)
     col_p1, col_p2 = st.columns([3, 1])
     with col_p1:
         project_path = st.text_input("Project Root Path", value=os.getcwd(), key="scan_path")
@@ -292,44 +293,38 @@ with tab2:
         st.write(" ")
         st.write(" ")
         if st.button("Scan Project"):
-            with st.spinner("Scanning..."):
+            with st.status("Scanning project structure...", expanded=True):
                 st.session_state.project_context_str = scan_directory(project_path)
                 key_files = read_key_files(project_path)
                 for k, v in key_files.items():
                     st.session_state.project_context_str += f"\n\n--- {k} ---\n{v}"
-                st.success("Scanned!")
+            st.success("Scanned!")
 
     if st.session_state.project_context_str:
         col_ctx1, col_ctx2 = st.columns([1, 1])
         with col_ctx1:
             with st.expander("📂 Project Structure"):
                 st.code(st.session_state.project_context_str)
-        
         with col_ctx2:
-            with st.expander("📄 File Explorer & Context Injector"):
-                auto_discover = st.toggle("🤖 Autonomous Context Discovery", help="Agent will automatically pick and read relevant files.")
-                
+            with st.expander("📄 Context Injector"):
+                auto_discover = st.toggle("🤖 Autonomous Context Discovery", value=True)
                 st.divider()
                 file_to_read = st.text_input("Enter relative path to read", placeholder="e.g., src/main.py")
-                if st.button("Read & Add to Context"):
+                if st.button("Read & Add"):
                     if file_to_read:
                         content = read_project_file(project_path, file_to_read)
                         if not content.startswith("Error:"):
                             st.session_state.selected_files[file_to_read] = content
-                            st.success(f"Added {file_to_read} to context!")
+                            st.success(f"Added {file_to_read}")
                         else:
                             st.error(content)
-                
                 if st.session_state.selected_files:
-                    st.write("**Included Files:**")
                     for f in list(st.session_state.selected_files.keys()):
-                        col_f1, col_f2 = st.columns([4, 1])
-                        col_f1.text(f"• {f}")
-                        if col_f2.button("🗑", key=f"del_{f}"):
+                        if st.button(f"🗑 {f}", key=f"del_{f}"):
                             del st.session_state.selected_files[f]
                             st.rerun()
 
-        # Augment project_context_str with selected file contents for the prompt
+        # Augment context
         augmented_context = st.session_state.project_context_str
         if st.session_state.selected_files:
             augmented_context += "\n\n### SELECTED FILE CONTENTS\n"
@@ -337,323 +332,141 @@ with tab2:
                 augmented_context += f"\n--- FILE: {f} ---\n{c}\n"
 
         st.divider()
-        
-        # --- MODE SWITCHER ---
-        evolution_mode = st.segmented_control(
-            "Select Evolution Branch", 
-            ["🔬 Experimentation Lab", "🏭 Feature Factory"],
-            default="🔬 Experimentation Lab"
-        )
+        evolution_mode = st.segmented_control("Branch", ["🔬 Experimentation Lab", "🏭 Feature Factory"], default="🔬 Experimentation Lab")
+        current_choice = "conduct experiment" if evolution_mode == "🔬 Experimentation Lab" else "new features"
 
+        # Evolution Flows
         if evolution_mode == "🔬 Experimentation Lab":
-            st.subheader("Scientific Research & Verification")
-            st.info("Focus: Hypotheses, benchmarks, ablation studies, and robustness.")
-            
-            # --- Experimentation Lab UI ---
-            exp_choice_tab = st.radio("Tooling", ["✨ AI Researcher", "🛠 Manual Design"], horizontal=True)
-            
-            if exp_choice_tab == "✨ AI Researcher":
-                if st.button("✨ Brainstorm Next Experiment"):
-                    with st.status("Analyzing project metrics...", expanded=True) as status:
-                        idea = run_async(generate_raw_idea(client, st.session_state.project_context_str, "conduct experiment"))
-                        st.session_state.generated_idea = idea
-                        st.session_state.idea_clarification_status = "IDLE"
-                        status.update(label="✅ Research Proposal Generated!", state="complete", expanded=False)
-                
+            choice_tab = st.radio("Tool", ["✨ AI Researcher", "🛠 Manual"], horizontal=True)
+            if choice_tab == "✨ AI Researcher":
+                if st.button("✨ Brainstorm"):
+                    with st.status("Thinking..."):
+                        st.session_state.generated_idea = run_async(generate_raw_idea(client, augmented_context, current_choice))
                 if st.session_state.generated_idea:
-                    st.session_state.generated_idea = st.text_area("**Research Proposal (Edit as needed):**", value=st.session_state.generated_idea, height=100)
-                    if st.button("🔍 Design Experimental Protocol"):
-                        with st.status("Defining variables and controls...", expanded=True) as status:
-                            questions = run_async(generate_idea_questions(client, st.session_state.project_context_str, st.session_state.generated_idea, "conduct experiment"))
-                            
+                    st.session_state.generated_idea = st.text_area("Proposal", value=st.session_state.generated_idea)
+                    if st.button("🔍 Design Protocol"):
+                        with st.status("Designing...", expanded=True) as status:
+                            qs = run_async(generate_idea_questions(client, augmented_context, st.session_state.generated_idea, current_choice))
                             if creativity_mode:
-                                st.write("Creativity Mode: Self-answering protocol details...")
-                                self_qa = run_async(clarifier.self_answer_questions(st.session_state.generated_idea, questions))
-                                st.session_state.idea_qa_history = self_qa
-                                st.session_state.idea_clarification_status = "READY_AUTO" # Special state to trigger prompt build
-                                status.update(label="✅ Protocol Finalized!", state="complete", expanded=False)
-                            else:
-                                st.session_state.idea_questions = questions
-                                st.session_state.idea_clarification_status = "REFINING"
-                                status.update(label="🗣 Technical Clarification Required", state="complete", expanded=True)
-                        st.rerun()
-            
-            else: # Manual Design
-                exp_int = st.text_input("What do you want to verify?", placeholder="e.g., Performance impact of RCU locks...")
-                exp_tp = st.selectbox("Methodology", ["ablation", "hyperparameter_search", "robustness_test", "custom"])
-                exp_par = st.text_input("Parameters/Variables", placeholder="e.g., thread_count=[1, 2, 4, 8]")
-                
-                if st.button("🏗 Architect Experiment"):
-                    st.session_state.generated_idea = f"Manual {exp_tp}: {exp_int} (Params: {exp_par})"
-                    with st.status("Synthesizing research questions...", expanded=True) as status:
-                        questions = run_async(generate_idea_questions(client, st.session_state.project_context_str, st.session_state.generated_idea, "conduct experiment"))
-                        
-                        if creativity_mode:
-                            st.write("Creativity Mode: Auto-designing variables...")
-                            self_qa = run_async(clarifier.self_answer_questions(st.session_state.generated_idea, questions))
-                            st.session_state.idea_qa_history = self_qa
-                            st.session_state.idea_clarification_status = "READY_AUTO"
-                            status.update(label="✅ Experiment Architected!", state="complete", expanded=False)
-                        else:
-                            st.session_state.idea_questions = questions
-                            st.session_state.idea_clarification_status = "REFINING"
-                            status.update(label="🗣 Technical Clarification Required", state="complete", expanded=True)
-                    st.rerun()
-
-        else: # 🏭 Feature Factory
-            st.subheader("High-Performance Feature Engineering")
-            st.info("Focus: Architectural expansion, new capabilities, and integration.")
-            
-            # --- Feature Factory UI ---
-            feat_choice_tab = st.radio("Tooling", ["✨ AI Architect", "✍️ Manual Specification"], horizontal=True)
-            
-            if feat_choice_tab == "✨ AI Architect":
-                if st.button("✨ Brainstorm New Feature"):
-                    with st.status("Scanning for architectural opportunities...", expanded=True) as status:
-                        idea = run_async(generate_raw_idea(client, st.session_state.project_context_str, "new features"))
-                        st.session_state.generated_idea = idea
-                        st.session_state.idea_clarification_status = "IDLE"
-                        status.update(label="✅ Feature Opportunity Identified!", state="complete", expanded=False)
-                
-                if st.session_state.generated_idea:
-                    st.session_state.generated_idea = st.text_area("**Feature Proposal (Edit as needed):**", value=st.session_state.generated_idea, height=100)
-                    if st.button("📐 Design System Architecture"):
-                        with st.status("Mapping data flows and interfaces...", expanded=True) as status:
-                            questions = run_async(generate_idea_questions(client, st.session_state.project_context_str, st.session_state.generated_idea, "new features"))
-                            
-                            if creativity_mode:
-                                st.write("Creativity Mode: Self-answering integration details...")
-                                self_qa = run_async(clarifier.self_answer_questions(st.session_state.generated_idea, questions))
+                                self_qa = run_async(clarifier.self_answer_questions(st.session_state.generated_idea, qs))
                                 st.session_state.idea_qa_history = self_qa
                                 st.session_state.idea_clarification_status = "READY_AUTO"
-                                status.update(label="✅ Architecture Designed!", state="complete", expanded=False)
                             else:
-                                st.session_state.idea_questions = questions
+                                st.session_state.idea_questions = qs
                                 st.session_state.idea_clarification_status = "REFINING"
-                                status.update(label="🗣 Technical Clarification Required", state="complete", expanded=True)
                         st.rerun()
-            
-            else: # Manual Specification
-                custom_feat = st.text_area("Specify Feature", placeholder="Describe the new functionality you want to add...")
-                if st.button("📐 Architect Custom Feature"):
-                    st.session_state.generated_idea = custom_feat
-                    with st.status("Analyzing architectural impact...", expanded=True) as status:
-                        questions = run_async(generate_idea_questions(client, st.session_state.project_context_str, custom_feat, "new features"))
-                        
+            else:
+                exp_int = st.text_input("Intention", placeholder="e.g. Test RCU locks")
+                if st.button("🏗 Architect"):
+                    st.session_state.generated_idea = exp_int
+                    with st.status("Architecting..."):
+                        qs = run_async(generate_idea_questions(client, augmented_context, exp_int, current_choice))
                         if creativity_mode:
-                            st.write("Creativity Mode: Auto-filling implementation details...")
-                            self_qa = run_async(clarifier.self_answer_questions(st.session_state.generated_idea, questions))
-                            st.session_state.idea_qa_history = self_qa
+                            st.session_state.idea_qa_history = run_async(clarifier.self_answer_questions(exp_int, qs))
                             st.session_state.idea_clarification_status = "READY_AUTO"
-                            status.update(label="✅ Implementation Plan Ready!", state="complete", expanded=False)
                         else:
-                            st.session_state.idea_questions = questions
+                            st.session_state.idea_questions = qs
                             st.session_state.idea_clarification_status = "REFINING"
-                            status.update(label="🗣 Technical Clarification Required", state="complete", expanded=True)
+                    st.rerun()
+        else: # Feature Factory
+            choice_tab = st.radio("Tool", ["✨ AI Architect", "✍️ Manual"], horizontal=True)
+            if choice_tab == "✨ AI Architect":
+                if st.button("✨ Brainstorm Feature"):
+                    with st.status("Thinking..."):
+                        st.session_state.generated_idea = run_async(generate_raw_idea(client, augmented_context, current_choice))
+                if st.session_state.generated_idea:
+                    st.session_state.generated_idea = st.text_area("Feature", value=st.session_state.generated_idea)
+                    if st.button("📐 Design Architecture"):
+                        with st.status("Designing..."):
+                            qs = run_async(generate_idea_questions(client, augmented_context, st.session_state.generated_idea, current_choice))
+                            if creativity_mode:
+                                st.session_state.idea_qa_history = run_async(clarifier.self_answer_questions(st.session_state.generated_idea, qs))
+                                st.session_state.idea_clarification_status = "READY_AUTO"
+                            else:
+                                st.session_state.idea_questions = qs
+                                st.session_state.idea_clarification_status = "REFINING"
+                        st.rerun()
+            else:
+                feat_int = st.text_area("Specify Feature")
+                if st.button("📐 Architect Custom"):
+                    st.session_state.generated_idea = feat_int
+                    with st.status("Architecting..."):
+                        qs = run_async(generate_idea_questions(client, augmented_context, feat_int, current_choice))
+                        if creativity_mode:
+                            st.session_state.idea_qa_history = run_async(clarifier.self_answer_questions(feat_int, qs))
+                            st.session_state.idea_clarification_status = "READY_AUTO"
+                        else:
+                            st.session_state.idea_questions = qs
+                            st.session_state.idea_clarification_status = "REFINING"
                     st.rerun()
 
-        # --- SHARED CLARIFICATION LOOP (Universal UI) ---
+        # Shared Clarification/Generation Logic
         if st.session_state.idea_clarification_status == "READY_AUTO":
-             # Auto-trigger prompt build
-             with st.status("🧠 AI is architecting your prompt...", expanded=True) as status:
-                st.write("Combining context and intelligence...")
-                questions = [item['q'] for item in st.session_state.idea_qa_history]
-                answers = [item['a'] for item in st.session_state.idea_qa_history]
-                
-                final_prompt, disc_paths = run_async(generate_idea_and_prompt(
-                    client, builder, augmented_context, 
-                    current_choice, st.session_state.generated_idea, st.session_state.idea_qa_history,
+            with st.status("🚀 Architecting Evolution...", expanded=True) as status:
+                st.write("Combining context...")
+                final_p, d_paths = run_async(generate_idea_and_prompt(
+                    client, builder, augmented_context, current_choice, 
+                    st.session_state.generated_idea, st.session_state.idea_qa_history,
                     root_path=project_path, auto_discover=auto_discover
                 ))
-                
-                # Also need insights here for the journal
-                insights = run_async(builder.discovery_agent.investigate_and_analyze(project_path, st.session_state.generated_idea, augmented_context))
-                
-                st.session_state.generated_prompt = final_prompt
-                st.session_state.discovered_files = disc_paths
+                st.write("Generating insights...")
+                ins = run_async(builder.discovery_agent.investigate_and_analyze(project_path, st.session_state.generated_idea, augmented_context))
+                st.session_state.generated_prompt = final_p
+                st.session_state.discovered_files = d_paths
                 st.session_state.idea_clarification_status = "READY"
-                
-                # Save to Journal
-                entry = ResearchEntry(
-                    intention=st.session_state.generated_idea,
-                    mode=current_choice,
-                    insights=insights,
-                    final_prompt=final_prompt,
-                    tags=["evolution", current_choice, "auto-creative"]
-                )
-                journal.add_entry(entry)
-                status.update(label="✨ Evolution Prompt Finalized!", state="complete", expanded=False)
-             st.rerun()
+                journal.add_entry(ResearchEntry(intention=st.session_state.generated_idea, mode=current_choice, insights=ins, final_prompt=final_p, tags=["evolution", current_choice, "auto"]))
+                status.update(label="✅ Finalized!", state="complete")
+            st.rerun()
 
         if st.session_state.idea_clarification_status == "REFINING":
-            st.write("---")
-            st.markdown("### 🗣 Technical Clarification")
-            current_choice = "conduct experiment" if evolution_mode == "🔬 Experimentation Lab" else "new features"
-            
+            st.subheader("🗣 Technical Clarification")
             for i, q in enumerate(st.session_state.idea_questions):
-                q_key = f"evolve_q_input_{i}"
-                col_q, col_s = st.columns([5, 1])
-                with col_q:
-                    st.text_input(f"**{i+1}.** {q}", key=q_key)
-                with col_s:
-                    st.write(" ")
-                    st.write(" ")
-                    st.button("Skip", key=f"skip_evolve_{i}", on_click=skip_question_callback, args=(q_key,))
-            
-            if st.button("🚀 Generate Final Implementation Prompt", type="primary"):
-                # Collect answers
-                st.session_state.idea_qa_history = []
-                for i, q in enumerate(st.session_state.idea_questions):
-                    ans = st.session_state.get(f"evolve_q_input_{i}", "")
-                    st.session_state.idea_qa_history.append({"q": q, "a": ans})
-
-                with st.spinner("Combining context and intelligence..."):
-                    final_prompt, disc_paths = run_async(generate_idea_and_prompt(
-                        client, builder, augmented_context, 
-                        current_choice, st.session_state.generated_idea, st.session_state.idea_qa_history,
-                        root_path=project_path, auto_discover=auto_discover
-                    ))
-                    
-                    # Also need insights here for the journal
-                    insights = run_async(builder.discovery_agent.investigate_and_analyze(project_path, st.session_state.generated_idea, augmented_context))
-                    
-                    st.session_state.generated_prompt = final_prompt
-                    st.session_state.discovered_files = disc_paths
-                    st.session_state.idea_clarification_status = "READY"
-                    
-                    # Save to Journal
-                    entry = ResearchEntry(
-                        intention=st.session_state.generated_idea,
-                        mode=current_choice,
-                        insights=insights,
-                        final_prompt=final_prompt,
-                        tags=["evolution", current_choice]
-                    )
-                    journal.add_entry(entry)
-                    st.rerun()
-
-        if st.session_state.generated_prompt and st.session_state.get("idea_clarification_status") == "READY":
-            st.divider()
-            st.success("✨ Evolution Prompt Finalized!")
-            if st.session_state.discovered_files:
-                with st.expander("👀 View Autonomously Read Files"):
-                    for f in st.session_state.discovered_files:
-                        st.text(f"• {f}")
-            st.code(st.session_state.generated_prompt, language="markdown")
-            if st.button("🗑 Reset Evolution"):
-                st.session_state.generated_idea = ""
-                st.session_state.generated_prompt = ""
-                st.session_state.discovered_files = []
-                st.session_state.idea_clarification_status = "IDLE"
-                st.session_state.idea_qa_history = []
+                q_key = f"evolve_q_{i}"
+                st.text_input(q, key=q_key)
+            if st.button("🚀 Generate Final Implementation Prompt"):
+                st.session_state.idea_qa_history = [{"q": q, "a": st.session_state.get(f"evolve_q_{i}", "")} for i, q in enumerate(st.session_state.idea_questions)]
+                st.session_state.idea_clarification_status = "READY_AUTO"
                 st.rerun()
 
-# --- Tab 3: Paper to Code ---
+        if st.session_state.generated_prompt and st.session_state.idea_clarification_status == "READY":
+            st.code(st.session_state.generated_prompt, language="markdown")
+            if st.button("🗑 Reset Evolution"):
+                reset_state()
+                st.session_state.generated_idea = ""
+                st.rerun()
+
+# --- Tab 3: Paper Implementation ---
 with tab3:
     st.header("Paper Implementation")
-    
-    st.info("Upload a research paper (PDF) or paste the methodology text to generate an implementation plan.")
-    
-    col_p1, col_p2 = st.columns(2)
-    
-    with col_p1:
-        uploaded_pdf = st.file_uploader("Upload Research Paper (PDF)", type="pdf")
-        if uploaded_pdf:
-            if st.button("Parse PDF Content"):
-                with st.status("📄 Parsing PDF with cutting-edge extraction...", expanded=True) as status:
-                    text = extract_text_from_pdf(uploaded_pdf)
-                    if text.startswith("Error"):
-                        st.error(text)
-                        status.update(label="❌ PDF Parsing Failed", state="error")
-                    else:
-                        st.session_state.paper_text = text
-                        st.success(f"Parsed {len(text)} characters from PDF.")
-                        status.update(label="✅ PDF Content Extracted!", state="complete")
-
-    with col_p2:
-        paper_content = st.text_area("Paper Methodology / Abstract (Manual Paste)", 
-                                     value=st.session_state.get("paper_text", ""),
-                                     height=300, 
-                                     placeholder="Paste key sections here if not using PDF...")
-
-    if st.button("Generate Implementation Plan", type="primary"):
-        if paper_content:
-            with st.status("🧠 AI is analyzing the paper methodology...", expanded=True) as status:
-                st.write("Extracting algorithms and constraints...")
-                final_prompt, disc_paths = run_async(builder.build_prompt(
-                    intention="Implement method from paper", answers=[], questions=[], mode="iterative",
-                    project_context=f"### Paper Content\n{paper_content}"
-                ))
-                st.session_state.generated_prompt = final_prompt
-                st.session_state.discovered_files = disc_paths
-                status.update(label="✨ Implementation Plan Finalized!", state="complete")
-    
-    if st.session_state.generated_prompt and not st.session_state.intention: # Simple check for tab 3 context
-        if st.session_state.discovered_files:
-            with st.expander("👀 View Autonomously Read Files"):
-                for f in st.session_state.discovered_files:
-                    st.text(f"• {f}")
+    uploaded_pdf = st.file_uploader("Upload PDF", type="pdf")
+    if uploaded_pdf and st.button("Parse PDF"):
+        with st.status("Parsing..."):
+            st.session_state.paper_text = extract_text_from_pdf(uploaded_pdf)
+    paper_input = st.text_area("Paper Content", value=st.session_state.paper_text, height=300)
+    if st.button("Generate Plan"):
+        if paper_input:
+            with st.status("Analyzing..."):
+                final_p, _ = run_async(builder.build_prompt("Implement paper", [], [], mode="iterative", project_context=f"### Paper\n{paper_input}"))
+                st.session_state.generated_prompt = final_p
+    if st.session_state.generated_prompt:
         st.code(st.session_state.generated_prompt, language="markdown")
 
 # --- Tab 4: Research Hub ---
 with tab4:
-    st.header("Research Journal & Academic Export")
-    st.info("Track your research lineage and export findings for your paper.")
-
-    col_j1, col_j2 = st.columns([2, 1])
-    
-    with col_j1:
-        st.subheader("Journal Entries")
-        entries = journal.get_entries()
-        if not entries:
-            st.write("No entries yet. Start a project to populate the journal.")
-        for e in reversed(entries):
-            with st.expander(f"📌 {e.timestamp} | {e.intention[:50]}..."):
-                st.write(f"**Mode**: {e.mode}")
-                if e.insights:
-                    st.markdown("### Insights")
-                    st.write(e.insights)
-                if e.final_prompt:
-                    st.markdown("### Generated Prompt")
-                    st.code(e.final_prompt[:500] + "...", language="markdown")
-                
-                if st.button("Export to LaTeX", key=f"latex_{e.entry_id}"):
-                    tex = AcademicExporter.to_latex_methodology(e.insights or "", e.intention)
-                    st.text_area("LaTeX Methodology", value=tex, height=200)
-                
-                if st.button("🛡 Run Privacy Audit", key=f"audit_{e.entry_id}"):
-                    with st.spinner("Auditing for PII and secrets..."):
-                        audit_content = (e.insights or "") + "\n" + (e.final_prompt or "")
-                        audit_res = run_async(security.process_content(audit_content))
-                        if audit_res.state == SecurityState.COMPLETED:
-                            if audit_res.pii_detected or audit_res.threat_level != "LOW":
-                                st.error(f"⚠️ Threats Detected! Level: {audit_res.threat_level}")
-                                st.write("**PII/Secrets identified:**")
-                                for p in audit_res.pii_detected: st.text(f"• {p}")
-                            else:
-                                st.success("✅ Privacy audit passed. No PII detected.")
-                        else:
-                            st.warning("Privacy audit failed to complete.")
-
-    with col_j2:
-        st.subheader("Actions")
-        if st.button("Export Full Journal as Markdown"):
-            md = journal.export_as_markdown()
-            st.download_button("Download Journal (MD)", md, file_name="research_journal.md")
-        
-        if st.button("Export Full Journal as JSON"):
-            full_entries = [e.model_dump() for e in journal.get_entries()]
-            js_data = json.dumps(full_entries, indent=2)
-            st.download_button("Download Journal (JSON)", js_data, file_name="research_journal.json")
-        
-        st.divider()
-        st.write("**BibTeX Citation**")
-        st.code(AcademicExporter.get_bibtex(), language="bibtex")
-
-        st.divider()
-        if st.button("Clear Journal (Danger Zone)", type="secondary"):
-            if os.path.exists(journal.storage_path):
-                os.remove(journal.storage_path)
-                journal._ensure_storage()
-                st.rerun()
-    
+    st.header("Research Journal")
+    entries = journal.get_entries()
+    for e in reversed(entries):
+        with st.expander(f"📌 {e.timestamp} | {e.intention[:50]}..."):
+            st.markdown(f"**Insights**: {e.insights}")
+            st.code(e.final_prompt[:1000], language="markdown")
+            if st.button("🛡 Privacy Audit", key=f"sec_{e.entry_id}"):
+                with st.status("Auditing..."):
+                    res = run_async(security.process_content(e.final_prompt))
+                    if res.threat_level == "LOW": st.success("Pass")
+                    else: st.error(f"Threat: {res.threat_level}")
+            if st.button("📄 Export LaTeX", key=f"tex_{e.entry_id}"):
+                st.text_area("LaTeX", AcademicExporter.to_latex_methodology(e.insights or "", e.intention))
+    if st.button("🗑 Clear Journal"):
+        if os.path.exists(journal.storage_path): os.remove(journal.storage_path)
+        journal._ensure_storage()
+        st.rerun()
