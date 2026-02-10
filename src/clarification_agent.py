@@ -1,5 +1,6 @@
 from typing import List, Dict, Tuple, Any
 from src.llm_integration import LLMClient
+from src.features.bulletproof_parser import parse_json_safely
 import json
 
 class ClarificationAgent:
@@ -53,14 +54,7 @@ CRITERIA FOR READY:
         try:
             response_text = await self.llm_client.agenerate_completion(messages, temperature=0.2)
             
-            # Robust JSON extraction
-            start = response_text.find('{')
-            end = response_text.rfind('}') + 1
-            
-            if start == -1 or end == 0:
-                raise ValueError("No JSON object found in response")
-                
-            data = json.loads(response_text[start:end])
+            data = parse_json_safely(response_text, default_fallback={})
             
             # Basic validation and defaults
             status = data.get("status", "REFINING")
@@ -79,7 +73,7 @@ CRITERIA FOR READY:
                 "status": "REFINING", 
                 "questions": ["Could you provide more specific details on the architectural constraints?"],
                 "estimated_turns_remaining": 1,
-                "rationale": f"Parsing Error: {e}"
+                "rationale": f"System Error: {e}"
             }
 
     async def generate_questions(self, intention: str, num_questions: int = 3) -> List[str]:
@@ -119,13 +113,9 @@ You must respond ONLY with a JSON list of answers corresponding to the questions
         try:
             response_text = await self.llm_client.agenerate_completion(messages, temperature=0.8)
             
-            # Robust JSON extraction
-            import re
-            json_match = re.search(r'(\[.*\])', response_text, re.DOTALL)
-            if json_match:
-                answers = json.loads(json_match.group(1))
-            else:
-                answers = json.loads(response_text)
+            answers = parse_json_safely(response_text, default_fallback=[])
+            if not isinstance(answers, list):
+                answers = [str(answers)]
             
             qa_history = []
             for q, a in zip(questions, answers):

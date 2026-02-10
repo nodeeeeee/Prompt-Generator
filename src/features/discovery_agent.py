@@ -4,6 +4,7 @@ import asyncio
 from typing import List, Dict
 from src.llm_integration import LLMClient
 from src.features.file_interface import read_project_file
+from src.features.bulletproof_parser import parse_json_safely
 
 logger = logging.getLogger("DiscoveryAgent")
 
@@ -53,13 +54,9 @@ Select the most important files."""
         try:
             response_text = await self.llm_client.agenerate_completion(messages, temperature=0.2)
             
-            # Robust JSON extraction
-            import re
-            json_match = re.search(r'(\[.*\])', response_text, re.DOTALL)
-            if json_match:
-                paths = json.loads(json_match.group(1))
-            else:
-                paths = json.loads(response_text)
+            paths = parse_json_safely(response_text, default_fallback=[])
+            if not isinstance(paths, list):
+                paths = []
             
             discovered_content = {}
             for path in paths:

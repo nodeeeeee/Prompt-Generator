@@ -26,7 +26,7 @@ journal = ResearchJournal()
 def run_async(coro):
     """
     Safely execute async functions in a dedicated thread.
-    This prevents conflicts with Streamlit's internal event loop.
+    Enhanced with timeout and better error propagation.
     """
     result = []
     exception = []
@@ -35,16 +35,23 @@ def run_async(coro):
         try:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            result.append(loop.run_until_complete(coro))
+            # Add a global task timeout of 180s to prevent orphan threads
+            task = loop.create_task(coro)
+            result.append(loop.run_until_complete(asyncio.wait_for(task, timeout=180.0)))
             loop.close()
+        except asyncio.TimeoutError:
+            exception.append(TimeoutError("The operation took too long and was terminated."))
         except Exception as e:
             exception.append(e)
 
-    thread = threading.Thread(target=target)
+    thread = threading.Thread(target=target, daemon=True)
     thread.start()
     thread.join()
 
     if exception:
+        # Reset stuck status if an error occurs
+        st.session_state.clarification_status = "IDLE"
+        st.session_state.idea_clarification_status = "IDLE"
         raise exception[0]
     return result[0]
 
