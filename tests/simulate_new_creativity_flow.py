@@ -19,7 +19,7 @@ async def test_creativity_flow():
     clarifier = ClarificationAgent(client)
     builder = PromptBuilder(client)
 
-    intention = "Design a high-performance distributed logger in Go."
+    intention = "Implement a wait-free, linearizable multi-producer multi-consumer queue using hazard pointers for memory reclamation in C++23."
     logger.info(f"Testing Creativity Mode for intention: {intention}")
 
     # 1. Analyze Status (Get questions)
