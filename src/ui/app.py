@@ -16,6 +16,7 @@ from src.features.research_journal import ResearchJournal, ResearchEntry
 from src.features.academic_exporter import AcademicExporter
 from src.features.prompt_refiner import PromptRefiner
 from src.security_engine import SecurityEngine, SecurityState
+from src.features.pdf_parser import extract_text_from_pdf
 import asyncio
 import threading
 
@@ -139,14 +140,25 @@ with tab1:
         reset_state()
         if user_intention:
             st.session_state.intention = user_intention
-            if creativity_mode:
-                st.session_state.clarification_status = "READY"
-            else:
-                with st.spinner("Analyzing requirements..."):
-                    result = run_async(clarifier.analyze_status(user_intention))
+            
+            with st.status("🧠 Agent is architecting your project...", expanded=True) as status:
+                st.write("Analyzing requirements...")
+                result = run_async(clarifier.analyze_status(user_intention))
+                
+                if creativity_mode and result["status"] == "REFINING":
+                    st.write("Creativity Mode active: Self-answering architectural questions...")
+                    self_qa = run_async(clarifier.self_answer_questions(user_intention, result["questions"]))
+                    st.session_state.qa_history.extend(self_qa)
+                    st.session_state.clarification_status = "READY"
+                    status.update(label="✅ Project Architecture Scoped!", state="complete", expanded=False)
+                else:
                     st.session_state.clarification_status = result["status"]
                     st.session_state.current_questions = result["questions"]
                     st.session_state.estimated_turns = result.get("estimated_turns_remaining", 1)
+                    if result["status"] == "READY":
+                        status.update(label="✅ Requirements Clear!", state="complete", expanded=False)
+                    else:
+                        status.update(label="🗣 Technical Clarification Required", state="complete", expanded=True)
             st.rerun()
 
     # Clarification Loop
@@ -335,21 +347,29 @@ with tab2:
             
             if exp_choice_tab == "✨ AI Researcher":
                 if st.button("✨ Brainstorm Next Experiment"):
-                    with st.spinner("Analyzing project metrics..."):
+                    with st.status("Analyzing project metrics...", expanded=True) as status:
                         idea = run_async(generate_raw_idea(client, st.session_state.project_context_str, "conduct experiment"))
                         st.session_state.generated_idea = idea
                         st.session_state.idea_clarification_status = "IDLE"
+                        status.update(label="✅ Research Proposal Generated!", state="complete", expanded=False)
                 
                 if st.session_state.generated_idea:
                     st.session_state.generated_idea = st.text_area("**Research Proposal (Edit as needed):**", value=st.session_state.generated_idea, height=100)
                     if st.button("🔍 Design Experimental Protocol"):
-                        if creativity_mode:
-                            st.session_state.idea_clarification_status = "READY"
-                        else:
-                            with st.spinner("Defining variables and controls..."):
-                                questions = run_async(generate_idea_questions(client, st.session_state.project_context_str, st.session_state.generated_idea, "conduct experiment"))
+                        with st.status("Defining variables and controls...", expanded=True) as status:
+                            questions = run_async(generate_idea_questions(client, st.session_state.project_context_str, st.session_state.generated_idea, "conduct experiment"))
+                            
+                            if creativity_mode:
+                                st.write("Creativity Mode: Self-answering protocol details...")
+                                self_qa = run_async(clarifier.self_answer_questions(st.session_state.generated_idea, questions))
+                                st.session_state.idea_qa_history = self_qa
+                                st.session_state.idea_clarification_status = "READY_AUTO" # Special state to trigger prompt build
+                                status.update(label="✅ Protocol Finalized!", state="complete", expanded=False)
+                            else:
                                 st.session_state.idea_questions = questions
                                 st.session_state.idea_clarification_status = "REFINING"
+                                status.update(label="🗣 Technical Clarification Required", state="complete", expanded=True)
+                        st.rerun()
             
             else: # Manual Design
                 exp_int = st.text_input("What do you want to verify?", placeholder="e.g., Performance impact of RCU locks...")
@@ -358,13 +378,20 @@ with tab2:
                 
                 if st.button("🏗 Architect Experiment"):
                     st.session_state.generated_idea = f"Manual {exp_tp}: {exp_int} (Params: {exp_par})"
-                    if creativity_mode:
-                        st.session_state.idea_clarification_status = "READY"
-                    else:
-                        with st.spinner("Synthesizing research questions..."):
-                            questions = run_async(generate_idea_questions(client, st.session_state.project_context_str, st.session_state.generated_idea, "conduct experiment"))
+                    with st.status("Synthesizing research questions...", expanded=True) as status:
+                        questions = run_async(generate_idea_questions(client, st.session_state.project_context_str, st.session_state.generated_idea, "conduct experiment"))
+                        
+                        if creativity_mode:
+                            st.write("Creativity Mode: Auto-designing variables...")
+                            self_qa = run_async(clarifier.self_answer_questions(st.session_state.generated_idea, questions))
+                            st.session_state.idea_qa_history = self_qa
+                            st.session_state.idea_clarification_status = "READY_AUTO"
+                            status.update(label="✅ Experiment Architected!", state="complete", expanded=False)
+                        else:
                             st.session_state.idea_questions = questions
                             st.session_state.idea_clarification_status = "REFINING"
+                            status.update(label="🗣 Technical Clarification Required", state="complete", expanded=True)
+                    st.rerun()
 
         else: # 🏭 Feature Factory
             st.subheader("High-Performance Feature Engineering")
@@ -375,35 +402,82 @@ with tab2:
             
             if feat_choice_tab == "✨ AI Architect":
                 if st.button("✨ Brainstorm New Feature"):
-                    with st.spinner("Scanning for architectural opportunities..."):
+                    with st.status("Scanning for architectural opportunities...", expanded=True) as status:
                         idea = run_async(generate_raw_idea(client, st.session_state.project_context_str, "new features"))
                         st.session_state.generated_idea = idea
                         st.session_state.idea_clarification_status = "IDLE"
+                        status.update(label="✅ Feature Opportunity Identified!", state="complete", expanded=False)
                 
                 if st.session_state.generated_idea:
                     st.session_state.generated_idea = st.text_area("**Feature Proposal (Edit as needed):**", value=st.session_state.generated_idea, height=100)
                     if st.button("📐 Design System Architecture"):
-                        if creativity_mode:
-                            st.session_state.idea_clarification_status = "READY"
-                        else:
-                            with st.spinner("Mapping data flows and interfaces..."):
-                                questions = run_async(generate_idea_questions(client, st.session_state.project_context_str, st.session_state.generated_idea, "new features"))
+                        with st.status("Mapping data flows and interfaces...", expanded=True) as status:
+                            questions = run_async(generate_idea_questions(client, st.session_state.project_context_str, st.session_state.generated_idea, "new features"))
+                            
+                            if creativity_mode:
+                                st.write("Creativity Mode: Self-answering integration details...")
+                                self_qa = run_async(clarifier.self_answer_questions(st.session_state.generated_idea, questions))
+                                st.session_state.idea_qa_history = self_qa
+                                st.session_state.idea_clarification_status = "READY_AUTO"
+                                status.update(label="✅ Architecture Designed!", state="complete", expanded=False)
+                            else:
                                 st.session_state.idea_questions = questions
                                 st.session_state.idea_clarification_status = "REFINING"
+                                status.update(label="🗣 Technical Clarification Required", state="complete", expanded=True)
+                        st.rerun()
             
             else: # Manual Specification
                 custom_feat = st.text_area("Specify Feature", placeholder="Describe the new functionality you want to add...")
                 if st.button("📐 Architect Custom Feature"):
                     st.session_state.generated_idea = custom_feat
-                    if creativity_mode:
-                        st.session_state.idea_clarification_status = "READY"
-                    else:
-                        with st.spinner("Analyzing architectural impact..."):
-                            questions = run_async(generate_idea_questions(client, st.session_state.project_context_str, custom_feat, "new features"))
+                    with st.status("Analyzing architectural impact...", expanded=True) as status:
+                        questions = run_async(generate_idea_questions(client, st.session_state.project_context_str, custom_feat, "new features"))
+                        
+                        if creativity_mode:
+                            st.write("Creativity Mode: Auto-filling implementation details...")
+                            self_qa = run_async(clarifier.self_answer_questions(st.session_state.generated_idea, questions))
+                            st.session_state.idea_qa_history = self_qa
+                            st.session_state.idea_clarification_status = "READY_AUTO"
+                            status.update(label="✅ Implementation Plan Ready!", state="complete", expanded=False)
+                        else:
                             st.session_state.idea_questions = questions
                             st.session_state.idea_clarification_status = "REFINING"
+                            status.update(label="🗣 Technical Clarification Required", state="complete", expanded=True)
+                    st.rerun()
 
         # --- SHARED CLARIFICATION LOOP (Universal UI) ---
+        if st.session_state.idea_clarification_status == "READY_AUTO":
+             # Auto-trigger prompt build
+             with st.status("🧠 AI is architecting your prompt...", expanded=True) as status:
+                st.write("Combining context and intelligence...")
+                questions = [item['q'] for item in st.session_state.idea_qa_history]
+                answers = [item['a'] for item in st.session_state.idea_qa_history]
+                
+                final_prompt, disc_paths = run_async(generate_idea_and_prompt(
+                    client, builder, augmented_context, 
+                    current_choice, st.session_state.generated_idea, st.session_state.idea_qa_history,
+                    root_path=project_path, auto_discover=auto_discover
+                ))
+                
+                # Also need insights here for the journal
+                insights = run_async(builder.discovery_agent.investigate_and_analyze(project_path, st.session_state.generated_idea, augmented_context))
+                
+                st.session_state.generated_prompt = final_prompt
+                st.session_state.discovered_files = disc_paths
+                st.session_state.idea_clarification_status = "READY"
+                
+                # Save to Journal
+                entry = ResearchEntry(
+                    intention=st.session_state.generated_idea,
+                    mode=current_choice,
+                    insights=insights,
+                    final_prompt=final_prompt,
+                    tags=["evolution", current_choice, "auto-creative"]
+                )
+                journal.add_entry(entry)
+                status.update(label="✨ Evolution Prompt Finalized!", state="complete", expanded=False)
+             st.rerun()
+
         if st.session_state.idea_clarification_status == "REFINING":
             st.write("---")
             st.markdown("### 🗣 Technical Clarification")
@@ -470,16 +544,42 @@ with tab2:
 # --- Tab 3: Paper to Code ---
 with tab3:
     st.header("Paper Implementation")
-    paper_content = st.text_area("Paste Abstract/Methodology", height=300)
-    if st.button("Generate Implementation Plan"):
+    
+    st.info("Upload a research paper (PDF) or paste the methodology text to generate an implementation plan.")
+    
+    col_p1, col_p2 = st.columns(2)
+    
+    with col_p1:
+        uploaded_pdf = st.file_uploader("Upload Research Paper (PDF)", type="pdf")
+        if uploaded_pdf:
+            if st.button("Parse PDF Content"):
+                with st.status("📄 Parsing PDF with cutting-edge extraction...", expanded=True) as status:
+                    text = extract_text_from_pdf(uploaded_pdf)
+                    if text.startswith("Error"):
+                        st.error(text)
+                        status.update(label="❌ PDF Parsing Failed", state="error")
+                    else:
+                        st.session_state.paper_text = text
+                        st.success(f"Parsed {len(text)} characters from PDF.")
+                        status.update(label="✅ PDF Content Extracted!", state="complete")
+
+    with col_p2:
+        paper_content = st.text_area("Paper Methodology / Abstract (Manual Paste)", 
+                                     value=st.session_state.get("paper_text", ""),
+                                     height=300, 
+                                     placeholder="Paste key sections here if not using PDF...")
+
+    if st.button("Generate Implementation Plan", type="primary"):
         if paper_content:
-            with st.spinner("📄 Analyzing paper..."):
+            with st.status("🧠 AI is analyzing the paper methodology...", expanded=True) as status:
+                st.write("Extracting algorithms and constraints...")
                 final_prompt, disc_paths = run_async(builder.build_prompt(
                     intention="Implement method from paper", answers=[], questions=[], mode="iterative",
                     project_context=f"### Paper Content\n{paper_content}"
                 ))
                 st.session_state.generated_prompt = final_prompt
                 st.session_state.discovered_files = disc_paths
+                status.update(label="✨ Implementation Plan Finalized!", state="complete")
     
     if st.session_state.generated_prompt and not st.session_state.intention: # Simple check for tab 3 context
         if st.session_state.discovered_files:

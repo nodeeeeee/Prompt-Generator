@@ -15,6 +15,9 @@ from tenacity import (
 
 load_dotenv()
 
+# Configure LiteLLM to be resilient to unsupported parameters (e.g., temperature for O-series)
+litellm.drop_params = True
+
 # Configure logging to capture errors effectively
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
