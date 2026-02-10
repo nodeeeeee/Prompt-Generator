@@ -6,3 +6,5 @@ __pycache__/
 api_key/
 results/
 .env
+api_key/
+.env
