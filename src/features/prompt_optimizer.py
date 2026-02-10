@@ -23,13 +23,14 @@ class PromptOptimizer:
 Your goal is to transform a technical prompt into an elite-level directive that is highly detailed but remains focused and avoids unnecessary wordiness.
 
 CRITICAL GUIDELINES:
-1. **STRUCTURAL CONSISTENCY**: Every prompt MUST follow this exact Markdown structure:
-   - # MISSION: High-level goal.
-   - # ARCHITECTURE: Data flows and key components.
-   - # IMPLEMENTATION PROTOCOL: Step-by-step rules.
-   - # EVALUATION: Mandatory benchmarking section.
+1. **MANDATORY STANDARDIZED STRUCTURE**: Every single prompt MUST include these exact 5 top-level Markdown headers. Do not rename, merge, or prune them:
+   - # MISSION: High-level implementation goal.
+   - # ROLE: Technical persona and expertise.
+   - # SPECIFICATIONS: Project-specific technical constraints and synthetic Q&A.
+   - # IMPLEMENTATION PROTOCOL: Step-by-step rules and iterative cycle.
+   - # EVALUATION: Mandatory benchmarking and verification strategy.
 2. **TECHNICAL DENSITY**: Prune all generic filler. Focus on specific libraries, algorithms, and technical edge cases.
-3. **BALANCED LENGTH**: Be comprehensive but NOT exhaustive. Aim for high impact per word. The total length should be substantial but avoid repeating the same concepts.
+3. **BALANCED LENGTH**: Aim for high impact per word. The total length should be substantial (ideally 4000-7000 chars) but avoid repeating concepts.
 4. **FORCE DEEP THINKING**: Retain the mandatory <thinking> process but keep it focused on the immediate implementation path.
 """
 

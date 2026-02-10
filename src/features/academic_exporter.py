@@ -21,8 +21,11 @@ class AcademicExporter:
             line = line.strip()
             if not line: continue
             
-            if line.startswith("###") or line.startswith("**"):
-                section_name = line.replace("#", "").replace("*", "").strip()
+            # Robust header detection for any level (# to ###) or bold text
+            if line.startswith("#") or line.startswith("**"):
+                # Prune markdown symbols
+                section_name = line.lstrip("#").replace("*", "").strip()
+                if not section_name: continue
                 latex += r"\subsection{" + section_name + "}\n"
             elif line.startswith("-") or line.startswith("*"):
                 if current_section != "list":
