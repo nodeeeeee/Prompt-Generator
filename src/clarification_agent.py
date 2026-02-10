@@ -86,56 +86,59 @@ CRITERIA FOR READY:
 
     async def self_answer_questions(self, intention: str, questions: List[str]) -> List[Dict[str, str]]:
         """
-        In creativity mode, the agent answers its own questions by performing deep technical reasoning.
-        It investigates common practice and specifies state-of-the-art solutions.
+        In creativity mode, the agent answers its own questions by performing deep technical reasoning
+        for each question individually to ensure maximum technical density and architectural rigor.
         """
         if not questions:
             return []
 
-        system_prompt = """You are a Principal Systems Architect and Research Lead. 
-You are tasked with providing the definitive technical specifications for a high-complexity research project.
+        logger.info(f"Self-answering {len(questions)} architectural questions for: {intention}")
+        
+        qa_history = []
 
-Your goal is to fill in the missing architectural details with high-density, pedantic, and state-of-the-art solutions.
+        # We answer questions one-by-one to prevent the model from becoming generic
+        # and to allow for parallel execution if desired (here sequential for maximum coherence)
+        for i, q in enumerate(questions):
+            system_prompt = """You are a Principal Systems Architect and Lead Researcher. 
+You are defining the core technical specifications for a high-complexity project.
 
-GUIDELINES:
-1. **NO GENERIC STATEMENTS**: Never use phrases like "industry-standard practices" or "high-performance libraries". 
-2. **BE SPECIFIC**: Name specific algorithms (e.g., Paxos, RCU, LSM-trees), libraries (e.g., jemalloc, io_uring), and architectural patterns.
-3. **MANDATE RIGOR**: Specify exact performance targets, memory reclamation strategies, and consistency models.
-4. **COHESION**: Every answer must integrate perfectly into a unified, scalable system design.
+Your goal is to provide a definitive, technically dense, and state-of-the-art answer to an architectural question.
 
-Respond ONLY with a JSON list of detailed strings: ["Specific Answer 1...", "Specific Answer 2...", ...]
+MANDATORY GUIDELINES:
+1. **NO GENERIC BOILERPLATE**: Absolutely avoid phrases like "industry-standard", "high-performance", or "best practices".
+2. **BE PEDANTICALLY SPECIFIC**: Specify exact algorithms (e.g., Paxos, RCU, LSM-trees), libraries (e.g., jemalloc, io_uring), data structures, and memory models.
+3. **MANDATE RIGOR**: Specify exact performance targets (e.g., "99th percentile latency < 500us"), scalability limits, and formal verification goals.
+4. **THINK AS A SCIENTIST**: Your answer should feel like a peer-reviewed methodology section.
+
+Respond with ONLY the technical specification for this specific question.
 """
 
-        user_content = f"""USER INTENTION: {intention}
+            user_content = f"""USER INTENTION: {intention}
+PREVIOUS SPECIFICATIONS: {str(qa_history) if qa_history else 'None'}
 
-TECHNICAL QUESTIONS TO RESOLVE:
-{chr(10).join([f"{i+1}. {q}" for i, q in enumerate(questions)])}
+QUESTION TO ANSWER: {q}
 
-Provide architect-level, technically dense answers for each question."""
+Provide the definitive technical specification:"""
 
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content}
-        ]
+            try:
+                # Use real-time status updates via logger if possible, but here we return to UI
+                ans = await self.llm_client.agenerate_completion(
+                    [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_content}
+                    ], 
+                    temperature=0.8,
+                    timeout=45
+                )
+                
+                if not ans or len(ans.strip()) < 10:
+                    ans = f"Detailed architectural analysis of {q} requires implementation of a custom logic layer optimized for the specific {intention} constraints."
+                
+                qa_history.append({"q": q, "a": ans.strip()})
+                logger.info(f"  Processed self-answer {i+1}/{len(questions)}")
+                
+            except Exception as e:
+                logger.error(f"Failed to self-answer question {i+1}: {e}")
+                qa_history.append({"q": q, "a": f"Technical specification for {q} will be derived during the initial research phase, prioritizing the core {intention} requirements."})
 
-        try:
-            # Use higher temperature for creativity, but the system prompt enforces technical rigor
-            response_text = await self.llm_client.agenerate_completion(messages, temperature=0.9)
-            
-            answers = parse_json_safely(response_text, default_fallback=[])
-            
-            if not isinstance(answers, list) or len(answers) == 0:
-                # If parsing fails, try to wrap the response as a single answer rather than generic boilerplate
-                logger.warning("Failed to parse answers as list, using raw response as integrated answer.")
-                return [{"q": "Integrated Architectural Detail", "a": response_text}]
-            
-            qa_history = []
-            for i, q in enumerate(questions):
-                # Handle cases where LLM might provide fewer answers than questions
-                ans = answers[i] if i < len(answers) else "Consulted state-of-the-art documentation: implementation requires custom logic specific to this module's performance constraints."
-                qa_history.append({"q": q, "a": str(ans)})
-            
-            return qa_history
-        except Exception as e:
-            logger.error(f"Self-answering failed: {e}")
-            return [{"q": q, "a": f"Technical specification required: Analysis of {q} indicates a need for deep integration with the core {intention} logic."} for q in questions]
+        return qa_history

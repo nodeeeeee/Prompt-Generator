@@ -1,8 +1,10 @@
 import json
+import logging
 from typing import Dict, Any, Tuple, List
 from src.llm_integration import LLMClient
 from src.prompt_builder import PromptBuilder
-from src.features.experiment_planner import generate_experiment_prompt_snippet
+
+logger = logging.getLogger(__name__)
 
 async def generate_idea_questions(
     client: LLMClient,

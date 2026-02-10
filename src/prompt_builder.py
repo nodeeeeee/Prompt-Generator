@@ -1,3 +1,5 @@
+import logging
+import asyncio
 from typing import List, Optional, Tuple
 from src.llm_integration import LLMClient
 from src.features.persona import suggest_persona
@@ -12,6 +14,8 @@ from src.features.prompt_templates import (
 from src.features.prompt_optimizer import PromptOptimizer
 from src.features.discovery_agent import DiscoveryAgent
 from src.features.context_manager import scan_directory
+
+logger = logging.getLogger(__name__)
 
 class PromptBuilder:
     def __init__(self, llm_client: LLMClient):
@@ -34,7 +38,6 @@ class PromptBuilder:
         Builds the final prompt using specialized templates and LLM optimization.
         Returns (final_prompt, discovered_file_paths).
         """
-        import asyncio
         
         # High performance: parallelize persona suggestion and complexity estimation
         try:
