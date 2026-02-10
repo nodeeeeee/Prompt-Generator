@@ -122,6 +122,8 @@ class SecurityContext(BaseModel):
                 raise ValueError("Content must be a string.")
             if not v.strip():
                 raise ValueError("Content cannot be empty or whitespace.")
+            if len(v) < 10:
+                raise ValueError("Content is too brief for security analysis.")
             if len(v) > 500000: # Context-level hard boundary
                  raise ValueError("Content size exceeds maximum allowable limit (500KB).")
             return v

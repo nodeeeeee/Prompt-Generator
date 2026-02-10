@@ -14,14 +14,11 @@ def extract_text_from_pdf(pdf_file) -> str:
         for page in reader.pages:
             page_text = page.extract_text()
             if page_text:
-                text += page_text + "
-"
+                text += page_text + "\n"
         
         # Basic cleanup: remove excessive whitespace
-        lines = [line.strip() for line in text.split('
-') if line.strip()]
-        return "
-".join(lines)
+        lines = [line.strip() for line in text.split('\n') if line.strip()]
+        return "\n".join(lines)
     except Exception as e:
         logger.error(f"Failed to parse PDF: {e}")
         return f"Error parsing PDF: {e}"
