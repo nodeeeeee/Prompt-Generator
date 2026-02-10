@@ -15,8 +15,18 @@ from tenacity import (
 
 load_dotenv()
 
-# Configure LiteLLM to be resilient to unsupported parameters (e.g., temperature for O-series)
+# Configure LiteLLM to be resilient to unsupported parameters
 litellm.drop_params = True
+
+# Streamlit Cloud Secret Integration
+try:
+    import streamlit as st
+    if "OPENAI_API_KEY" in st.secrets:
+        os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
+except ImportError:
+    pass # Not running in streamlit or secrets not set
+except Exception:
+    pass
 
 # Configure logging to capture errors effectively
 logging.basicConfig(level=logging.INFO)
