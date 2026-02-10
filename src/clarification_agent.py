@@ -1,5 +1,6 @@
 import json
 import logging
+import asyncio
 from typing import List, Dict, Tuple, Any
 from src.llm_integration import LLMClient
 from src.features.bulletproof_parser import parse_json_safely
