@@ -111,7 +111,10 @@ class PromptBuilder:
 
         # Use AI to optimize and expand the prompt
         try:
-            optimized_prompt = await self.optimizer.optimize_prompt(raw_prompt, mode, intention)
+            # Add evaluation strategy requirement to the optimizer context
+            eval_requirement = "\n4) Include a formal EVALUATION & BENCHMARKING section with specific metrics (e.g., latency, throughput, energy efficiency, or formal proof goals)."
+            
+            optimized_prompt = await self.optimizer.optimize_prompt(raw_prompt, mode, intention + eval_requirement)
             if not optimized_prompt:
                 optimized_prompt = raw_prompt
         except Exception:

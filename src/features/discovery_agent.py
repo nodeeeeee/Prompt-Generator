@@ -82,29 +82,38 @@ Select the most important files."""
         max_files: int = 15
     ) -> str:
         """
-        Parallelized multi-agent investigation:
+        Parallelized multi-agent investigation with Global Context:
         1. Explorer Agent: Selects files.
-        2. Analyst Agents (Parallel): Analyze each file individually.
-        3. Synthesizer Agent: Combines analyses into a final report.
+        2. Global Context Agent: Summarizes anchor files (README, main).
+        3. Analyst Agents (Parallel): Analyze each file individually using global context.
+        4. Synthesizer Agent: Combines analyses into a final report.
         """
         discovered_files = await self.discover_and_read_context(root_path, intention, tree_str, max_files)
         
         if not discovered_files:
             return "No relevant files could be discovered for analysis."
 
+        # --- GLOBAL CONTEXT ACQUISITION ---
+        anchor_files = [f for f in discovered_files.keys() if any(x in f.lower() for x in ["readme", "architecture", "design", "main", "requirements", "package.json"])]
+        global_context_snippet = ""
+        for af in anchor_files:
+            global_context_snippet += f"\n--- GLOBAL CONTEXT from {af} ---\n{discovered_files[af][:2000]}\n"
+
         # Parallelized Analysis Phase (Multi-Agent Simulation)
         async def analyze_file(path: str, content: str) -> str:
             analyst_prompt = f"""You are a Specialized Code Analyst. 
-Analyze the following file in the context of: {intention}
+Analyze the following file in the context of the user's intention: {intention}
 
-FILE: {path}
+Use the following global project context for reference:
+{global_context_snippet}
+
+FILE TO ANALYZE: {path}
 CONTENT:
-{content[:8000]} # Limit per file for performance
+{content[:8000]}
 
-Provide 2-3 deep technical insights about this specific file's role and constraints.
+Provide 2-3 deep technical insights about this specific file's role and constraints, especially how it fits into the global architecture.
 """
             try:
-                # Give each analyst a 30s timeout
                 return await self.llm_client.agenerate_completion(
                     [{"role": "user", "content": analyst_prompt}], 
                     temperature=0.3,
@@ -113,13 +122,13 @@ Provide 2-3 deep technical insights about this specific file's role and constrai
             except Exception as e:
                 return f"Error analyzing {path}: {e}"
 
-        logger.info(f"Starting parallel analysis of {len(discovered_files)} files...")
+        logger.info(f"Starting parallel analysis of {len(discovered_files)} files with global context...")
         analysis_tasks = [analyze_file(p, c) for p, c in discovered_files.items()]
         individual_analyses = await asyncio.gather(*analysis_tasks)
 
         # Synthesis Phase
-        synthesis_instruction = """You are a Lead Systems Architect. 
-You are given a collection of technical analyses from various sub-agents who investigated a codebase.
+        synthesis_instruction = f"""You are a Lead Systems Architect. 
+You are given a collection of technical analyses from various sub-agents who investigated a codebase for the intention: {intention}.
 Your task is to synthesize these into a coherent 'Architectural Implementation Directive'.
 
 Include:

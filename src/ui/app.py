@@ -12,8 +12,15 @@ from src.features.context_manager import scan_directory, read_key_files
 from src.features.experiment_planner import generate_experiment_prompt_snippet
 from src.features.idea_generator import generate_idea_and_prompt, generate_idea_questions, generate_raw_idea
 from src.features.file_interface import read_project_file, get_file_metadata
+from src.features.research_journal import ResearchJournal, ResearchEntry
+from src.features.academic_exporter import AcademicExporter
+from src.features.prompt_refiner import PromptRefiner
+from src.security_engine import SecurityEngine, SecurityState
 import asyncio
 import threading
+
+# Initialize Journal
+journal = ResearchJournal()
 
 def run_async(coro):
     """
@@ -71,6 +78,7 @@ if "idea_questions" not in st.session_state: st.session_state.idea_questions = [
 if "idea_clarification_status" not in st.session_state: st.session_state.idea_clarification_status = "IDLE"
 if "selected_files" not in st.session_state: st.session_state.selected_files = {}
 if "discovered_files" not in st.session_state: st.session_state.discovered_files = []
+if "prompt_refinement" not in st.session_state: st.session_state.prompt_refinement = ""
 
 def reset_state():
     st.session_state.generated_prompt = ""
@@ -88,7 +96,13 @@ except Exception:
 
 with st.sidebar:
     st.title("🤖 Configuration")
-    selected_model = st.selectbox("Select Model", available_models, index=0)
+    selected_model = st.selectbox("Select Primary Model", available_models, index=0)
+    
+    consensus_mode = st.toggle("🤝 Consensus Mode", help="Generate prompts from two models for comparison.")
+    second_model = None
+    if consensus_mode:
+        second_model = st.selectbox("Select Secondary Model", available_models, index=min(1, len(available_models)-1))
+
     api_key = st.text_input("API Key (Optional)", type="password")
     if api_key:
         os.environ["OPENAI_API_KEY"] = api_key
@@ -104,12 +118,14 @@ try:
     client = LLMClient(default_model=selected_model)
     clarifier = ClarificationAgent(client)
     builder = PromptBuilder(client)
+    refiner = PromptRefiner(client)
+    security = SecurityEngine()
 except Exception as e:
     st.error(f"Error initializing services: {e}")
     st.stop()
 
 # Tabs
-tab1, tab2, tab3 = st.tabs(["🆕 New Project", "🛠 Evolve Project", "📄 Paper to Code"])
+tab1, tab2, tab3, tab4 = st.tabs(["🆕 New Project", "🛠 Evolve Project", "📄 Paper to Code", "🔬 Research Hub"])
 
 def skip_question_callback(key):
     st.session_state[key] = "[User skipped this question]"
@@ -184,18 +200,66 @@ with tab1:
             with st.spinner("🧠 AI is architecting your prompt..."):
                 questions = [item['q'] for item in st.session_state.qa_history]
                 answers = [item['a'] for item in st.session_state.qa_history]
+                
+                # Fetch insights separately for the journal
+                tree = scan_directory(os.getcwd())
+                insights = run_async(builder.discovery_agent.investigate_and_analyze(os.getcwd(), st.session_state.intention, tree))
+                
                 final_prompt, disc_paths = run_async(builder.build_prompt(
                     st.session_state.intention, answers, questions, mode=mode_mapping[mode_label]
                 ))
+                
+                second_prompt = None
+                if consensus_mode and second_model:
+                    second_client = LLMClient(default_model=second_model)
+                    second_builder = PromptBuilder(second_client)
+                    second_prompt, _ = run_async(second_builder.build_prompt(
+                        st.session_state.intention, answers, questions, mode=mode_mapping[mode_label]
+                    ))
+
                 st.session_state.generated_prompt = final_prompt
+                st.session_state.second_prompt = second_prompt
                 st.session_state.discovered_files = disc_paths
+                
+                # Save to Journal
+                entry = ResearchEntry(
+                    intention=st.session_state.intention,
+                    mode=mode_mapping[mode_label],
+                    insights=insights,
+                    final_prompt=final_prompt,
+                    tags=["new-project", f"model:{selected_model}"]
+                )
+                if second_prompt:
+                    entry.tags.append(f"consensus:{second_model}")
+                    entry.metrics["second_prompt"] = second_prompt
+                
+                journal.add_entry(entry)
 
         if st.session_state.generated_prompt:
-            if st.session_state.discovered_files:
-                with st.expander("👀 View Autonomously Read Files"):
-                    for f in st.session_state.discovered_files:
-                        st.text(f"• {f}")
-            st.code(st.session_state.generated_prompt, language="markdown")
+            if st.session_state.get("second_prompt"):
+                col_p1, col_p2 = st.columns(2)
+                with col_p1:
+                    st.subheader(f"Model: {selected_model}")
+                    st.code(st.session_state.generated_prompt, language="markdown")
+                with col_p2:
+                    st.subheader(f"Model: {second_model}")
+                    st.code(st.session_state.second_prompt, language="markdown")
+            else:
+                if st.session_state.discovered_files:
+                    with st.expander("👀 View Autonomously Read Files"):
+                        for f in st.session_state.discovered_files:
+                            st.text(f"• {f}")
+                st.code(st.session_state.generated_prompt, language="markdown")
+            
+            # Interactive Refinement
+            st.divider()
+            st.subheader("💬 Interactive Refinement")
+            refine_input = st.chat_input("Suggest a change (e.g., 'Make it more modular')")
+            if refine_input:
+                with st.spinner("Refining..."):
+                    new_prompt = run_async(refiner.refine_prompt(st.session_state.generated_prompt, refine_input))
+                    st.session_state.generated_prompt = new_prompt
+                    st.rerun()
 
 # --- Tab 2: Evolve Project ---
 with tab2:
@@ -368,9 +432,23 @@ with tab2:
                         current_choice, st.session_state.generated_idea, st.session_state.idea_qa_history,
                         root_path=project_path, auto_discover=auto_discover
                     ))
+                    
+                    # Also need insights here for the journal
+                    insights = run_async(builder.discovery_agent.investigate_and_analyze(project_path, st.session_state.generated_idea, augmented_context))
+                    
                     st.session_state.generated_prompt = final_prompt
                     st.session_state.discovered_files = disc_paths
                     st.session_state.idea_clarification_status = "READY"
+                    
+                    # Save to Journal
+                    entry = ResearchEntry(
+                        intention=st.session_state.generated_idea,
+                        mode=current_choice,
+                        insights=insights,
+                        final_prompt=final_prompt,
+                        tags=["evolution", current_choice]
+                    )
+                    journal.add_entry(entry)
                     st.rerun()
 
         if st.session_state.generated_prompt and st.session_state.get("idea_clarification_status") == "READY":
@@ -409,4 +487,66 @@ with tab3:
                 for f in st.session_state.discovered_files:
                     st.text(f"• {f}")
         st.code(st.session_state.generated_prompt, language="markdown")
+
+# --- Tab 4: Research Hub ---
+with tab4:
+    st.header("Research Journal & Academic Export")
+    st.info("Track your research lineage and export findings for your paper.")
+
+    col_j1, col_j2 = st.columns([2, 1])
+    
+    with col_j1:
+        st.subheader("Journal Entries")
+        entries = journal.get_entries()
+        if not entries:
+            st.write("No entries yet. Start a project to populate the journal.")
+        for e in reversed(entries):
+            with st.expander(f"📌 {e.timestamp} | {e.intention[:50]}..."):
+                st.write(f"**Mode**: {e.mode}")
+                if e.insights:
+                    st.markdown("### Insights")
+                    st.write(e.insights)
+                if e.final_prompt:
+                    st.markdown("### Generated Prompt")
+                    st.code(e.final_prompt[:500] + "...", language="markdown")
+                
+                if st.button("Export to LaTeX", key=f"latex_{e.entry_id}"):
+                    tex = AcademicExporter.to_latex_methodology(e.insights or "", e.intention)
+                    st.text_area("LaTeX Methodology", value=tex, height=200)
+                
+                if st.button("🛡 Run Privacy Audit", key=f"audit_{e.entry_id}"):
+                    with st.spinner("Auditing for PII and secrets..."):
+                        audit_content = (e.insights or "") + "\n" + (e.final_prompt or "")
+                        audit_res = run_async(security.process_content(audit_content))
+                        if audit_res.state == SecurityState.COMPLETED:
+                            if audit_res.pii_detected or audit_res.threat_level != "LOW":
+                                st.error(f"⚠️ Threats Detected! Level: {audit_res.threat_level}")
+                                st.write("**PII/Secrets identified:**")
+                                for p in audit_res.pii_detected: st.text(f"• {p}")
+                            else:
+                                st.success("✅ Privacy audit passed. No PII detected.")
+                        else:
+                            st.warning("Privacy audit failed to complete.")
+
+    with col_j2:
+        st.subheader("Actions")
+        if st.button("Export Full Journal as Markdown"):
+            md = journal.export_as_markdown()
+            st.download_button("Download Journal (MD)", md, file_name="research_journal.md")
+        
+        if st.button("Export Full Journal as JSON"):
+            full_entries = [e.model_dump() for e in journal.get_entries()]
+            js_data = json.dumps(full_entries, indent=2)
+            st.download_button("Download Journal (JSON)", js_data, file_name="research_journal.json")
+        
+        st.divider()
+        st.write("**BibTeX Citation**")
+        st.code(AcademicExporter.get_bibtex(), language="bibtex")
+
+        st.divider()
+        if st.button("Clear Journal (Danger Zone)", type="secondary"):
+            if os.path.exists(journal.storage_path):
+                os.remove(journal.storage_path)
+                journal._ensure_storage()
+                st.rerun()
     
