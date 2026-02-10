@@ -96,14 +96,14 @@ CRITERIA FOR READY:
         
         async def solve_q(idx, q):
             system_prompt = """You are a Principal Systems Architect. 
-Provide a definitive, technically dense, and state-of-the-art answer to an architectural question.
+Provide a definitive, technically dense, and extremely concise answer to an architectural question.
 
 MANDATORY GUIDELINES:
-1. NO GENERIC BOILERPLATE: Absolutely avoid "industry-standard" or "best practices".
-2. BE PEDANTICALLY SPECIFIC: Specify exact algorithms, libraries, data structures, and memory models.
-3. MANDATE RIGOR: Specify exact performance targets and consistency models.
+1. **CONCISENESS**: Limit your answer to 3 SENTENCES maximum.
+2. NO GENERIC BOILERPLATE: Absolutely avoid "industry-standard" or "best practices".
+3. SPECIFICITY: Name the exact algorithm, library (e.g., jemalloc), or protocol.
 """
-            user_content = f"PROJECT INTENTION: {intention}\n\nQUESTION: {q}\n\nProvide the definitive technical specification:"
+            user_content = f"PROJECT INTENTION: {intention}\n\nQUESTION: {q}\n\nProvide the concise technical specification:"
             
             try:
                 ans = await self.llm_client.agenerate_completion(
