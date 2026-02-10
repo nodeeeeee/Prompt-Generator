@@ -1,0 +1,15 @@
+version: "3.9"
+
+services:
+  prompt-generator:
+    build: .
+    command: ["python", "main.py"]
+    working_dir: /app
+    volumes:
+      - ./:/app
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONUNBUFFERED=1
+    ports:
+      - "8000:8000"
+    user: "${UID:-1000}:${GID:-1000}"
