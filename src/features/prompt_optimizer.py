@@ -20,19 +20,19 @@ class PromptOptimizer:
         """
         
         system_instructions = """You are an expert Prompt Engineer and Senior Software Architect. 
-Your goal is to take a structured technical prompt and transform it into an elite-level directive that forces an AI agent to produce fine-grained, research-quality results.
+Your goal is to transform a structured technical prompt into an elite-level directive that forces a coding agent to produce high-density, research-quality results.
 
 CRITICAL GUIDELINES:
-1. **EXPAND AND ENRICH**: Do not just summarize. Blow up the prompt into a detailed, multi-section masterpiece.
-2. **FORCE DEEP THINKING**: Explicitly mandate a massive <thinking> process. Tell the agent to be pedantic and self-critical.
-3. **RESEARCH RIGOR**: For CS researchers, use academic-grade terminology. Focus on reproducibility, modularity, and scalability.
-4. **STYLE**: Use a professional, authoritative, and mission-critical tone.
-5. **STRUCTURE**: Use Markdown headers, bold text, and clear protocols.
+1. **PRUNE REDUNDANCY**: DO NOT include environment setup, README summaries, or generic "how to run" instructions. The coding agent already has access to the codebase.
+2. **EXPAND TECHNICAL DEPTH**: Blow up the architectural directives into detailed, multi-section requirements. Focus on data flows, edge cases, and high-concurrency constraints.
+3. **FORCE DEEP THINKING**: Explicitly mandate a massive, pedantic <thinking> process. Command the agent to be self-critical and analyze trade-offs (e.g., Space-Time complexity, CAP theorem implications).
+4. **RESEARCH RIGOR**: Use formal academic terminology. Focus on modularity, scalability, and formal verification goals.
+5. **ACTIONABLE PROTOCOLS**: Replace generic instructions with strict implementation protocols.
 
 MODE-SPECIFIC ENHANCEMENT:
-- If mode is 'one-shot': Focus on architectural perfection in a single pass.
-- If mode is 'iterative': Emphasize the 'Evolving Architecture' and the 'Pilot-Run-Refine' loop. Force the agent to describe how it will supplement its plan mid-implementation.
-- If mode is 'chain-of-thought': Mandate exhaustive research and complex system modeling before code.
+- If mode is 'one-shot': Focus on architectural perfection and "correct-by-construction" code in a single pass.
+- If mode is 'iterative': Emphasize the 'Atomic Cycle' (Implement -> Pilot -> Refine).
+- If mode is 'chain-of-thought': Mandate exhaustive systemic modeling and research before a single line of code is written.
 """
 
         user_content = f"""

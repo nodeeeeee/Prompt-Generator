@@ -108,7 +108,10 @@ FILE TO ANALYZE: {path}
 CONTENT:
 {content[:8000]}
 
-Provide 2-3 deep technical insights about this specific file's role and constraints, especially how it fits into the global architecture.
+MANDATE:
+1. Provide 2-3 deep technical insights about this specific file's role and constraints.
+2. DO NOT repeat README content, environment setup, or generic boilerplate.
+3. Focus on how this code MUST be interfaced with or modified to fulfill the intention.
 """
             try:
                 return await self.llm_client.agenerate_completion(
@@ -130,10 +133,10 @@ Your task is to synthesize these into a coherent 'Architectural Implementation D
 
 Include:
 1. **Systemic Logic**: High-level patterns and cross-module dependencies.
-2. **Implementation Protocol**: Step-by-step technical guidelines.
-3. **Safety & Robustness**: Critical constraints and error-handling requirements.
+2. **Implementation Protocol**: Step-by-step technical guidelines for a coding agent.
+3. **Safety & Robustness**: Critical constraints and error-handling requirements identified in the existing code.
 
-Do not repeat the raw analyses. Provide a unified, high-density architectural strategy.
+DO NOT include environment setup, README summaries, or non-technical filler. This output is for a coding agent who already has access to the codebase.
 """
         
         combined_analysis_text = "\n\n".join(individual_analyses)

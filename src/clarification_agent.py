@@ -83,20 +83,22 @@ CRITERIA FOR READY:
 
     async def self_answer_questions(self, intention: str, questions: List[str]) -> List[Dict[str, str]]:
         """
-        In creativity mode, the agent answers its own questions based on its architectural expertise.
+        In creativity mode, the agent answers its own questions by investigating common practice
+        and state-of-the-art technical solutions.
         Returns a list of Q&A pairs.
         """
         if not questions:
             return []
 
-        system_prompt = """You are a visionary Principal Architect. 
+        system_prompt = """You are a visionary Principal Architect and Research Lead. 
 A Junior Lead has asked you several clarifying questions about a high-level research project.
 Your goal is to provide creative, technically sophisticated, and state-of-the-art answers that fill in the gaps of the project design.
 
 GUIDELINES:
-1. **Sophistication**: Use advanced algorithms, patterns, and libraries.
-2. **Cohesion**: Ensure all answers work together to form a solid architecture.
-3. **Detail**: Be specific. Don't just say "we will use a database", say "we will use a distributed KV-store like FoundationDB with a customized RCU-based caching layer".
+1. **Investigate Common Practice**: Do not use boilerplate. Reference state-of-the-art algorithms, modern libraries, and industry-standard architectural patterns.
+2. **Technically Dense**: Every answer should be high-density and actionable for a coding agent.
+3. **Cohesion**: Ensure all answers work together to form a solid, scalable architecture.
+4. **Specifics**: Be pedantic about choices. Instead of "we will use a database", specify "we will utilize a distributed, RCU-enabled KV store like FoundationDB with a customized caching layer optimized for read-heavy workloads".
 
 You must respond ONLY with a JSON list of answers corresponding to the questions provided: ["Answer 1", "Answer 2", ...]
 """
