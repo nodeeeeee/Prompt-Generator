@@ -34,14 +34,24 @@ def run_async(coro):
 
     def target():
         try:
+            # Set a new event loop for this thread to avoid Streamlit's event loop conflicts
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
+            
+            # Add a global task timeout of 180s to prevent orphan threads
             task = loop.create_task(coro)
-            result.append(loop.run_until_complete(asyncio.wait_for(task, timeout=180.0)))
+            res = loop.run_until_complete(asyncio.wait_for(task, timeout=180.0))
+            result.append(res)
+            
+            # Clean up the loop
             loop.close()
         except asyncio.TimeoutError:
             exception.append(TimeoutError("The operation took too long and was terminated."))
         except Exception as e:
+            import traceback
+            # Log the full traceback for cloud debugging
+            print(f"Error in run_async thread: {e}")
+            traceback.print_exc()
             exception.append(e)
 
     thread = threading.Thread(target=target, daemon=True)
@@ -52,7 +62,14 @@ def run_async(coro):
         # Reset stuck status if an error occurs
         st.session_state.clarification_status = "IDLE"
         st.session_state.idea_clarification_status = "IDLE"
+        # Provide a more user-friendly error in the UI
+        st.error(f"Background Task Error: {exception[0]}")
         raise exception[0]
+    
+    if not result:
+        st.error("Background task completed but returned no result.")
+        return None
+        
     return result[0]
 
 # AI Page Config
@@ -380,7 +397,8 @@ with tab2:
                         with st.status("Designing..."):
                             qs = run_async(generate_idea_questions(client, augmented_context, st.session_state.generated_idea, current_choice))
                             if creativity_mode:
-                                st.session_state.idea_qa_history = run_async(clarifier.self_answer_questions(st.session_state.generated_idea, qs))
+                                self_qa = run_async(clarifier.self_answer_questions(st.session_state.generated_idea, qs))
+                                st.session_state.idea_qa_history = self_qa
                                 st.session_state.idea_clarification_status = "READY_AUTO"
                             else:
                                 st.session_state.idea_questions = qs
