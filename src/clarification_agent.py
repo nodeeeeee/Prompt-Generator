@@ -1,7 +1,10 @@
+import json
+import logging
 from typing import List, Dict, Tuple, Any
 from src.llm_integration import LLMClient
 from src.features.bulletproof_parser import parse_json_safely
-import json
+
+logger = logging.getLogger(__name__)
 
 class ClarificationAgent:
     def __init__(self, llm_client: LLMClient):
