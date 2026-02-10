@@ -86,59 +86,35 @@ CRITERIA FOR READY:
 
     async def self_answer_questions(self, intention: str, questions: List[str]) -> List[Dict[str, str]]:
         """
-        In creativity mode, the agent answers its own questions by performing deep technical reasoning
-        for each question individually to ensure maximum technical density and architectural rigor.
+        In creativity mode, the agent answers its own questions by performing parallel deep technical reasoning.
         """
         if not questions:
             return []
 
-        logger.info(f"Self-answering {len(questions)} architectural questions for: {intention}")
+        logger.info(f"Self-answering {len(questions)} architectural questions in parallel for: {intention}")
         
-        qa_history = []
-
-        # We answer questions one-by-one to prevent the model from becoming generic
-        # and to allow for parallel execution if desired (here sequential for maximum coherence)
-        for i, q in enumerate(questions):
-            system_prompt = """You are a Principal Systems Architect and Lead Researcher. 
-You are defining the core technical specifications for a high-complexity project.
-
-Your goal is to provide a definitive, technically dense, and state-of-the-art answer to an architectural question.
+        async def solve_q(idx, q):
+            system_prompt = """You are a Principal Systems Architect. 
+Provide a definitive, technically dense, and state-of-the-art answer to an architectural question.
 
 MANDATORY GUIDELINES:
-1. **NO GENERIC BOILERPLATE**: Absolutely avoid phrases like "industry-standard", "high-performance", or "best practices".
-2. **BE PEDANTICALLY SPECIFIC**: Specify exact algorithms (e.g., Paxos, RCU, LSM-trees), libraries (e.g., jemalloc, io_uring), data structures, and memory models.
-3. **MANDATE RIGOR**: Specify exact performance targets (e.g., "99th percentile latency < 500us"), scalability limits, and formal verification goals.
-4. **THINK AS A SCIENTIST**: Your answer should feel like a peer-reviewed methodology section.
-
-Respond with ONLY the technical specification for this specific question.
+1. NO GENERIC BOILERPLATE: Absolutely avoid "industry-standard" or "best practices".
+2. BE PEDANTICALLY SPECIFIC: Specify exact algorithms, libraries, data structures, and memory models.
+3. MANDATE RIGOR: Specify exact performance targets and consistency models.
 """
-
-            user_content = f"""USER INTENTION: {intention}
-PREVIOUS SPECIFICATIONS: {str(qa_history) if qa_history else 'None'}
-
-QUESTION TO ANSWER: {q}
-
-Provide the definitive technical specification:"""
-
+            user_content = f"PROJECT INTENTION: {intention}\n\nQUESTION: {q}\n\nProvide the definitive technical specification:"
+            
             try:
-                # Use real-time status updates via logger if possible, but here we return to UI
                 ans = await self.llm_client.agenerate_completion(
-                    [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_content}
-                    ], 
+                    [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_content}],
                     temperature=0.8,
-                    timeout=45
+                    timeout=60
                 )
-                
-                if not ans or len(ans.strip()) < 10:
-                    ans = f"Detailed architectural analysis of {q} requires implementation of a custom logic layer optimized for the specific {intention} constraints."
-                
-                qa_history.append({"q": q, "a": ans.strip()})
-                logger.info(f"  Processed self-answer {i+1}/{len(questions)}")
-                
+                return {"q": q, "a": ans.strip()}
             except Exception as e:
-                logger.error(f"Failed to self-answer question {i+1}: {e}")
-                qa_history.append({"q": q, "a": f"Technical specification for {q} will be derived during the initial research phase, prioritizing the core {intention} requirements."})
+                logger.error(f"Failed to self-answer question {idx+1}: {e}")
+                return {"q": q, "a": f"Technical specification for {q} will be derived during implementation based on {intention} constraints."}
 
+        tasks = [solve_q(i, q) for i, q in enumerate(questions)]
+        qa_history = await asyncio.gather(*tasks)
         return qa_history

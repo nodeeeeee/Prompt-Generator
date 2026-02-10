@@ -38,9 +38,9 @@ def run_async(coro):
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             
-            # Add a global task timeout of 180s to prevent orphan threads
+            # Add a global task timeout of 600s to prevent orphan threads
             task = loop.create_task(coro)
-            res = loop.run_until_complete(asyncio.wait_for(task, timeout=180.0))
+            res = loop.run_until_complete(asyncio.wait_for(task, timeout=600.0))
             result.append(res)
             
             # Clean up the loop

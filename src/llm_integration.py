@@ -53,7 +53,7 @@ class LLMClient:
     High-performance, robust client for interacting with various LLM providers.
     Supports both synchronous and asynchronous operations with strict error handling.
     """
-    def __init__(self, default_model: str = "gpt-5.2", timeout: int = 30, max_retries: int = 3):
+    def __init__(self, default_model: str = "gpt-5.2", timeout: int = 90, max_retries: int = 3):
         self.default_model = default_model
         self.timeout = timeout
         self.max_retries = max_retries
