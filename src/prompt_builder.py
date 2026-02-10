@@ -66,15 +66,24 @@ class PromptBuilder:
         discovered_paths = []
         # Autonomous Discovery Phase
         if auto_discover and root_path:
-            tree = scan_directory(root_path)
-            insights = await self.discovery_agent.investigate_and_analyze(root_path, intention, tree)
+            # The tree/context provided is for the prompt agent's knowledge
+            # We use it to generate high-density insights
+            knowledge_map = project_context or scan_directory(root_path)
+            insights = await self.discovery_agent.investigate_and_analyze(root_path, intention, knowledge_map)
             
-            project_context = (project_context or "") + f"\n\n### ARCHITECTURAL INSIGHTS & CODEBASE GUIDELINES\n{insights}"
-            
-            # We still want to return the paths for UI feedback if needed, 
-            # though investigate_and_analyze doesn't return them directly now.
-            # For simplicity in this refactor, we'll focus on the prompt quality.
+            # We explicitly overwrite project_context to ONLY include synthesized insights.
+            # We do NOT include the raw project tree or file contents in the final prompt
+            # because the consumer coding agent will read the codebase itself.
+            project_context = f"### ARCHITECTURAL INSIGHTS & INTEGRATION GUIDELINES\n{insights}"
             discovered_paths = ["Autonomous Analysis performed"]
+        elif project_context:
+            # If not auto-discovering but context was provided, we still prune 
+            # obvious project structure/raw files to keep the prompt clean.
+            import re
+            # Prune tree-like structures and raw file blocks
+            project_context = re.sub(r'([│├└─]{2,}.*\n?)+', '', project_context) # Prune tree
+            project_context = re.sub(r'--- FILE: .* ---[\s\S]*?--- END FILE ---', '', project_context) # Prune raw blocks
+            project_context = project_context.strip()
 
         # Generate Mechanical Base Prompt
         if project_context and experiment_context:

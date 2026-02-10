@@ -361,9 +361,9 @@ with tab2:
         # Augment context
         augmented_context = st.session_state.project_context_str
         if st.session_state.selected_files:
-            augmented_context += "\n\n### SELECTED FILE CONTENTS\n"
+            augmented_context += "\n\n### SELECTED FILE CONTENTS (FOR AGENT KNOWLEDGE)\n"
             for f, c in st.session_state.selected_files.items():
-                augmented_context += f"\n--- FILE: {f} ---\n{c}\n"
+                augmented_context += f"\n--- FILE: {f} ---\n{c}\n--- END FILE ---\n"
 
         st.divider()
         evolution_mode = st.segmented_control("Branch", ["🔬 Experimentation Lab", "🏭 Feature Factory"], default="🔬 Experimentation Lab")
